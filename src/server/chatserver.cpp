@@ -47,16 +47,31 @@ void ChatServer::onMessage(const TcpConnectionPtr &conn,
                            Buffer *buffer,
                            Timestamp time)
 {
-    string buf = buffer->retrieveAllAsString();
-
-    // 测试，添加json打印代码
-    cout << buf << endl;
-
-    // 数据的反序列化
-    json js = json::parse(buf);
-    // 达到的目的：完全解耦网络模块的代码和业务模块的代码
-    // 通过js["msgid"] 获取=》业务handler=》conn  js  time
-    auto msgHandler = ChatService::instance()->getHandler(js["msgid"].get<int>());
-    // 回调消息绑定好的事件处理器，来执行相应的业务处理
-    msgHandler(conn, js, time);
+   while (buffer->readableBytes() >= sizeof(uint32_t))
+    {
+        // 窥探报文前四个字节
+        uint32_t length = buffer->peekInt32();
+        if (buffer->readableBytes() >= length + sizeof(uint32_t)) // 确保缓冲区里的数据足够
+        {
+            buffer->retrieve(sizeof(uint32_t)); // 移除长度字符串
+            json js;
+            try
+            {
+                string buf = buffer->retrieveAsString(length);
+                js = json::parse(buf);
+            }
+            catch (const nlohmann::json::parse_error &e)
+            {
+                LOG_ERROR << "JSON parse error at byte " << e.byte << ": " << e.what();
+                break;
+                // 处理解析失败的情况，例如记录错误、返回默认值等
+            }
+            auto msgHander = ChatService::instance()->getHandler(js["msgid"].get<int>());
+            msgHander(conn, js, time);
+        }
+        else
+        {
+            break;
+        }
+    }
 }
